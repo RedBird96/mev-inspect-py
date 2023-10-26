@@ -1,23 +1,29 @@
-# syntax=docker/dockerfile:1
-FROM golang:1.20 as builder
-ARG VERSION
-WORKDIR /build
+FROM python:3.9-slim-buster
 
-COPY go.mod ./
-COPY go.sum ./
+ENV POETRY_VERSION=1.1.12
 
-RUN go mod download
+RUN useradd --create-home flashbot \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends build-essential libffi-dev libpq-dev gcc procps \
+    && pip install poetry==$POETRY_VERSION \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-ADD . .
-RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=linux go build \
-    -trimpath \
-    -v \
-    -ldflags "-w -s -X 'github.com/flashbots/mev-boost/config.Version=$VERSION'" \
-    -o mev-boost .
+ENV PATH="${PATH}:/home/flashbot/.local/bin"
 
-FROM alpine
-WORKDIR /app
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /build/mev-boost /app/mev-boost
-EXPOSE 18550
-ENTRYPOINT ["/app/mev-boost"]
+COPY --chown=flashbot ./pyproject.toml /app/pyproject.toml
+COPY --chown=flashbot ./poetry.lock /app/poetry.lock
+WORKDIR /app/
+
+USER flashbot
+
+RUN poetry config virtualenvs.create false \
+    && poetry install
+
+COPY --chown=flashbot . /app
+
+# easter eggs 😝
+RUN echo "PS1='🕵️:\[\033[1;36m\]\h \[\033[1;34m\]\W\[\033[0;35m\]\[\033[1;36m\]$ \[\033[0m\]'" >> ~/.bashrc
+
+ENTRYPOINT [ "poetry" ]
+CMD [ "run", "python", "loop.py" ]
